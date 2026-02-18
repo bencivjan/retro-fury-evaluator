@@ -1,0 +1,208 @@
+# Retro Fury Evaluation Criteria
+# Each dimension has a weight and specific checks. Total weight = 100%.
+
+dimensions:
+  core_engine:
+    weight: 25
+    description: "Raycasting engine, rendering pipeline, collision system, procedural textures"
+    checks:
+      - id: engine_raycaster
+        name: "Raycaster module exists and implements DDA algorithm"
+        tool: validate-structure
+        critical: true
+
+      - id: engine_renderer
+        name: "Renderer orchestrates wall, floor, ceiling, and sprite drawing"
+        tool: verify-rendering
+
+      - id: engine_camera
+        name: "Camera module handles FOV, position, rotation"
+        tool: verify-rendering
+
+      - id: engine_sprites
+        name: "Sprite renderer with depth sorting and billboarding"
+        tool: verify-rendering
+
+      - id: engine_collision
+        name: "Circle-vs-grid collision with wall sliding"
+        tool: verify-mechanics
+
+      - id: engine_textures
+        name: "Procedural texture generation (walls, sprites, items)"
+        tool: verify-rendering
+
+      - id: engine_resolution
+        name: "320x200 internal resolution with scaling"
+        tool: verify-rendering
+
+  gameplay:
+    weight: 25
+    description: "Weapons, enemies, items, doors, objectives, levels"
+    checks:
+      - id: weapons_all_five
+        name: "All 5 weapons defined with correct stats"
+        tool: verify-mechanics
+        critical: true
+
+      - id: weapons_hitscan
+        name: "Hitscan weapons (pistol, shotgun, machine gun, plasma) work correctly"
+        tool: verify-mechanics
+
+      - id: weapons_projectile
+        name: "Rocket launcher fires projectiles with splash damage"
+        tool: verify-mechanics
+
+      - id: enemies_all_five
+        name: "All 5 enemy types defined with correct HP/speed/behavior"
+        tool: verify-mechanics
+        critical: true
+
+      - id: enemies_commander_boss
+        name: "Commander boss has 3 phases with distinct attacks"
+        tool: verify-mechanics
+
+      - id: items_pickups
+        name: "Health, ammo, armor, keycards, weapons as pickups"
+        tool: verify-mechanics
+
+      - id: doors_keycards
+        name: "Doors open normally or require keycards"
+        tool: verify-mechanics
+
+      - id: levels_all_five
+        name: "All 5 levels exist with unique maps and objectives"
+        tool: validate-structure
+        critical: true
+
+      - id: levels_objectives
+        name: "Each level has correct objective type (keycard, collect, rescue, plant, boss)"
+        tool: verify-mechanics
+
+      - id: levels_enemy_counts
+        name: "Enemy counts and types per level match spec"
+        tool: verify-mechanics
+
+  ai_system:
+    weight: 15
+    description: "Enemy AI state machine, pathfinding, behaviors"
+    checks:
+      - id: ai_state_machine
+        name: "State machine with IDLE/PATROL/ALERT/CHASE/ATTACK/PAIN/DEATH states"
+        tool: verify-mechanics
+        critical: true
+
+      - id: ai_line_of_sight
+        name: "Enemies detect player via line-of-sight raycasting"
+        tool: verify-mechanics
+
+      - id: ai_pathfinding
+        name: "Tile-based pathfinding toward player"
+        tool: verify-mechanics
+
+      - id: ai_behaviors
+        name: "Per-enemy-type behavior configs (speed, aggression, accuracy)"
+        tool: verify-mechanics
+
+      - id: ai_alerting
+        name: "Sound-based alerting (nearby enemies hear gunshots)"
+        tool: verify-mechanics
+
+  multiplayer:
+    weight: 20
+    description: "WebSocket server, protocol, gun game mode, arena"
+    checks:
+      - id: mp_server_exists
+        name: "Node.js WebSocket server in server/ directory"
+        tool: validate-structure
+        critical: true
+
+      - id: mp_server_starts
+        name: "Server starts and accepts WebSocket connections"
+        tool: test-server
+        critical: true
+
+      - id: mp_protocol
+        name: "All protocol message types implemented"
+        tool: verify-multiplayer
+
+      - id: mp_room_management
+        name: "Room creation, joining, and ready-up flow"
+        tool: verify-multiplayer
+
+      - id: mp_gun_game
+        name: "Gun game weapon progression (5 tiers, knife = win)"
+        tool: verify-multiplayer
+
+      - id: mp_arena_map
+        name: "Arena map exists with symmetric layout and spawn points"
+        tool: verify-multiplayer
+
+      - id: mp_tick_rate
+        name: "Server runs at 20 ticks/second"
+        tool: verify-multiplayer
+
+      - id: mp_hit_validation
+        name: "Server-side hit detection and damage validation"
+        tool: verify-multiplayer
+
+      - id: mp_respawn
+        name: "Respawn system with timer and random spawn point"
+        tool: verify-multiplayer
+
+  ui_audio:
+    weight: 10
+    description: "HUD, menus, minimap, audio, transitions"
+    checks:
+      - id: ui_hud
+        name: "HUD with health, armor, ammo, weapon display"
+        tool: validate-structure
+
+      - id: ui_menus
+        name: "Main menu, pause menu, death screen"
+        tool: validate-structure
+
+      - id: ui_minimap
+        name: "Togglable minimap"
+        tool: validate-structure
+
+      - id: ui_objectives
+        name: "Objective tracker with hints"
+        tool: validate-structure
+
+      - id: ui_lobby
+        name: "Multiplayer lobby (host/join with room code)"
+        tool: validate-structure
+
+      - id: audio_system
+        name: "Web Audio API sound generation system"
+        tool: validate-structure
+
+      - id: audio_weapons
+        name: "Per-weapon fire sounds"
+        tool: verify-mechanics
+
+  code_quality:
+    weight: 5
+    description: "Module structure, syntax, consistency"
+    checks:
+      - id: code_syntax
+        name: "All JavaScript files parse without syntax errors"
+        tool: check-syntax
+        critical: true
+
+      - id: code_modules
+        name: "ES6 module structure with proper imports/exports"
+        tool: check-syntax
+
+      - id: code_no_frameworks
+        name: "Vanilla JavaScript only (no React, Vue, etc.)"
+        tool: check-syntax
+
+scoring:
+  approved_threshold: 80
+  partial_threshold: 60
+  critical_must_pass: true
+  description: |
+    - APPROVED: score >= 80% AND all critical checks pass
+    - APPROVED (PARTIAL): score >= 60% AND all critical checks pass
+    - REJECTED: score < 60% OR any critical check fails

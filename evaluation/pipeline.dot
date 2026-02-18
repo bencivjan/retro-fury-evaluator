@@ -1,0 +1,107 @@
+// Retro Fury Evaluator Pipeline
+//
+// Based on the evaluator.dot pipeline from attractor-go. Customized for
+// evaluating the retro-fury FPS game against its project vision.
+//
+// Stages:
+//   1. Orchestrator   (Claude Opus)  - analyze submission, produce eval plan
+//   2. Builder        (Codex 5.3)    - build/update test harnesses
+//   3. QA             (Claude Opus)  - run tools, record results
+//   4. Visionary      (Claude Opus)  - judge against vision, provide feedback
+
+digraph retro_fury_evaluator {
+    goal = "Evaluate a retro-fury game submission against the project vision defined in evaluation/vision.md. The game should be a retro FPS with raycasting engine, 5 single-player levels, 5 enemy types, 5 weapons, multiplayer gun game mode, and server-authoritative WebSocket networking."
+    label = "Retro Fury Evaluator Pipeline"
+    default_max_retry = "3"
+    fallback_retry_target = "builder"
+
+    model_stylesheet = "
+        * {
+            reasoning_effort: high;
+        }
+    "
+
+    // -----------------------------------------------------------------------
+    // Start
+    // -----------------------------------------------------------------------
+    start [shape=Mdiamond, label="Submission Received"]
+
+    // -----------------------------------------------------------------------
+    // Phase 1 - Orchestrator (Claude Opus)
+    //
+    // Receives the game submission path. Reads the vision and criteria.
+    // Produces a delegation plan for builder tasks and QA checklist.
+    // -----------------------------------------------------------------------
+    orchestrator [
+        label       = "Orchestrator"
+        prompt      = "You are an evaluation orchestrator for the retro-fury FPS game.\n\nYou have received a game submission. The project vision is in evaluation/vision.md and the scoring criteria are in evaluation/criteria.yaml.\n\nYour job:\n1. Read the submitted game code and understand what was built\n2. Compare against the vision - what modules exist, what's missing, what's different\n3. Produce a delegation plan with two sections:\n   a. BUILDER TASKS - verification scripts to create or update in tools/ (e.g., check weapon damage values match spec, verify enemy HP, validate level map dimensions, test WebSocket protocol)\n   b. QA CHECKLIST - specific checks from criteria.yaml that QA must verify, each with the tool to use and expected outcome\n\nBe precise. Reference specific files, line numbers, and expected values from the vision."
+        model       = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    // -----------------------------------------------------------------------
+    // Phase 2 - Builder (Codex 5.3)
+    //
+    // Builds or updates verification tools. Does NOT evaluate - only builds
+    // what the orchestrator requested.
+    // -----------------------------------------------------------------------
+    builder [
+        label       = "Builder"
+        prompt      = "You are a toolsmith for the retro-fury game evaluator.\n\nGiven the orchestrator's delegation plan, build every verification tool listed under BUILDER TASKS.\n\nTools should:\n1. Be runnable Node.js scripts or shell scripts in the tools/ directory\n2. Read the game source files and check specific values against the vision\n3. Output structured JSON results: {check_id, result: 'PASS'|'FAIL', evidence: '...'}\n4. Handle missing files gracefully (report FAIL with clear message)\n5. Be self-contained (no external dependencies beyond Node.js)\n\nExisting tools in tools/ can be updated if the orchestrator requests it.\n\nIMPORTANT: Only write files inside the retro-fury-evaluator repository. Never modify the game code."
+        model       = "gpt-5.3-codex"
+        llm_provider = "openai"
+        goal_gate   = "true"
+        max_retries = "3"
+        retry_target = "builder"
+    ]
+
+    // -----------------------------------------------------------------------
+    // Phase 3 - QA (Claude Opus)
+    //
+    // Runs verification tools against the submission and records results.
+    // -----------------------------------------------------------------------
+    qa [
+        label       = "QA"
+        prompt      = "You are a QA engineer evaluating the retro-fury game.\n\nUsing the tools in tools/ and the QA CHECKLIST from the orchestrator:\n1. Run each verification tool against the submission\n2. Record the raw output for each check\n3. Determine PASS or FAIL with evidence\n4. Note any unexpected behavior even if checks pass\n\nProduce a structured evaluation report with:\n- Summary: overall pass/fail count, critical check status\n- Per-check results: check_id, tool, outcome, evidence\n- Score calculation using weights from evaluation/criteria.yaml\n- Observations: anything noteworthy not in the checklist\n\nBe objective. Report what the tools found."
+        model       = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    // -----------------------------------------------------------------------
+    // Phase 4 - Visionary (Claude Opus)
+    //
+    // Judges the submission against the full vision. Provides verdict and
+    // actionable feedback.
+    // -----------------------------------------------------------------------
+    visionary [
+        shape       = "diamond"
+        type        = "conditional"
+        label       = "Visionary"
+        prompt      = "You are the visionary for the retro-fury project. The vision is in evaluation/vision.md.\n\nYou have the QA evaluation report. Judge the submission:\n1. Vision alignment - does it deliver a retro FPS with all specified features?\n2. Completeness - are there gaps in levels, enemies, weapons, multiplayer?\n3. Quality bar - does the raycasting look right, do mechanics feel retro?\n4. Regression - does anything break core gameplay?\n\nApply the scoring from evaluation/criteria.yaml:\n- APPROVED (score >= 80%, all critical checks pass): status SUCCESS\n- APPROVED PARTIAL (score >= 60%, all critical checks pass): status PARTIAL_SUCCESS\n- REJECTED (score < 60% or critical failure): status FAIL with structured feedback:\n  a. What specifically is missing (reference QA evidence)\n  b. Why it matters to the vision\n  c. Concrete next steps for the developer\n\nWrite the final report to reports/ with the standard format from CLAUDE.md."
+        model       = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    // -----------------------------------------------------------------------
+    // Exit
+    // -----------------------------------------------------------------------
+    exit [shape=Msquare, label="Evaluation Complete"]
+
+    // -----------------------------------------------------------------------
+    // Edges
+    // -----------------------------------------------------------------------
+    start        -> orchestrator
+    orchestrator -> builder
+    builder      -> qa
+    qa           -> visionary
+
+    visionary -> exit [condition="outcome=success",          label="Approved",          weight="10"]
+    visionary -> exit [condition="outcome=partial_success",  label="Approved (partial)", weight="5"]
+    visionary -> exit [condition="outcome=fail",             label="Rejected",          weight="10"]
+}
