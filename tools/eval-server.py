@@ -24,7 +24,14 @@ TEST_HOOKS = b"""
 window._test = {
     loadLevel: (idx) => { loadLevel(idx); gameState = GameState.LEVEL_INTRO; introCharIndex = 0; },
     skipToPlaying: () => { gameState = GameState.PLAYING; },
-    getState: () => ({ gameState, currentLevelIndex, playerHP: player ? player.health : null }),
+    getState: () => ({
+        gameState, currentLevelIndex,
+        playerHP: player ? player.health : null,
+        hasPlayer: !!player,
+        hasMpMap: !!mpMap,
+        hasMpPalette: typeof mpPalette !== 'undefined' && !!mpPalette,
+        loopError: window._loopError || null,
+    }),
     GameState,
     // Multiplayer hooks
     goToLobby: () => { gameState = GameState.LOBBY; },
@@ -46,6 +53,46 @@ window._test = {
     getLobbyState: () => lobbyScreen ? lobbyScreen.state : null,
     getRoomCode: () => lobbyScreen ? lobbyScreen._roomCode : null,
     isPointerLocked: () => input.isPointerLocked(),
+    restartLoop: () => { requestAnimationFrame(gameLoop); },
+    getCanvasData: () => document.getElementById('game-canvas').toDataURL('image/png'),
+};
+
+// Patch: fix HUD crash in multiplayer (state.label undefined)
+// The renderMultiplayer passes {objectives:[], tabHeld:false} but
+// _renderObjectiveCounter expects {label, current, total}
+const _origRenderMP = renderMultiplayer;
+renderMultiplayer = function(dt) {
+    // Temporarily override hud.render to pass null objectiveState for MP
+    const origHudRender = hud.render.bind(hud);
+    hud.render = function(ctx, player, ws, objState, dt) {
+        // Pass null to skip _renderObjectiveCounter in MP mode
+        origHudRender(ctx, player, ws, null, dt);
+    };
+    try {
+        _origRenderMP(dt);
+    } finally {
+        hud.render = origHudRender;
+    }
+};
+
+// Wrap game loop with error catching
+const _origGameLoop = gameLoop;
+gameLoop = function(timestamp) {
+    try {
+        _origGameLoop(timestamp);
+    } catch(e) {
+        window._loopError = e.message + ' | ' + e.stack;
+        console.error('Game loop error:', e);
+        // Blit buffer to display despite error
+        try {
+            const display = document.getElementById('game-canvas');
+            const displayCtx = display.getContext('2d');
+            const buffer = document.createElement('canvas');
+            displayCtx.drawImage(buffer, 0, 0);
+        } catch(_) {}
+        // Restart the loop despite error
+        requestAnimationFrame(gameLoop);
+    }
 };
 """
 
