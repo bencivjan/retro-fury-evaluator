@@ -51,7 +51,7 @@ window._test = {
     },
     ready: () => { networkManager.send({ type: 'ready' }); },
     getLobbyState: () => lobbyScreen ? lobbyScreen.state : null,
-    getRoomCode: () => lobbyScreen ? lobbyScreen._roomCode : null,
+    getRoomCode: () => lobbyScreen ? lobbyScreen.roomCode : null,
     isPointerLocked: () => input.isPointerLocked(),
     restartLoop: () => { requestAnimationFrame(gameLoop); },
     getCanvasData: () => document.getElementById('game-canvas').toDataURL('image/png'),
@@ -93,6 +93,150 @@ gameLoop = function(timestamp) {
         // Restart the loop despite error
         requestAnimationFrame(gameLoop);
     }
+};
+
+// === AUTO-COMBAT for P1 (bypasses pointer lock requirement) ===
+// Patches updateMultiplayer to use auto-combat input instead of real input.
+window._autoP1Active = false;
+window._autoP1Tick = 0;
+
+// Store the desired auto-combat input per frame
+window._autoP1Input = { keys: [], mouseDX: 0, fire: false };
+
+// Patch updateMultiplayer to use auto-combat input when active
+const _origUpdateMP = updateMultiplayer;
+updateMultiplayer = function(dt) {
+    if (window._autoP1Active && gameState === GameState.MP_PLAYING && player && player.alive) {
+        window._autoP1Tick++;
+        const tick = window._autoP1Tick;
+
+        const rp = mpState.remotePlayer;
+        let keys = [];
+        let mouseDX = 0;
+        let shouldFire = false;
+
+        const myX = player.pos.x;
+        const myY = player.pos.y;
+
+        // Normalize player angle to prevent unbounded growth
+        player.angle = ((player.angle % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+
+        // Phase 1: Navigate to open area when in wall corridors.
+        // Map has wall columns at x=6 and x=25 from y=0 to y=3.
+        const inOpenArea = myY > 6 && myX > 8 && myX < 24;
+        const navPhase = !inOpenArea;
+
+        let targetX, targetY;
+        if (navPhase) {
+            targetX = 16;
+            targetY = 12;
+        } else if (rp && rp.alive && rp.pos) {
+            targetX = rp.pos.x;
+            targetY = rp.pos.y;
+        } else {
+            targetX = 16 + Math.sin(tick * 0.01) * 5;
+            targetY = 16 + Math.cos(tick * 0.01) * 5;
+        }
+
+        const dx = targetX - myX;
+        const dy = targetY - myY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const targetAngle = Math.atan2(dy, dx);
+        let angleDiff = targetAngle - player.angle;
+        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+        mouseDX = Math.max(-300, Math.min(300, angleDiff / 0.003));
+
+        keys.push('KeyW');
+        const strafePhase = tick % 80;
+        if (strafePhase < 20) keys.push('KeyA');
+        else if (strafePhase >= 40 && strafePhase < 60) keys.push('KeyD');
+
+        // Fire whenever aimed at opponent, even during nav
+        if (rp && rp.alive) {
+            const rpDist = Math.sqrt(Math.pow(rp.pos.x - myX, 2) + Math.pow(rp.pos.y - myY, 2));
+            const rpAngle = Math.atan2(rp.pos.y - myY, rp.pos.x - myX);
+            let rpDiff = rpAngle - player.angle;
+            while (rpDiff > Math.PI) rpDiff -= 2 * Math.PI;
+            while (rpDiff < -Math.PI) rpDiff += 2 * Math.PI;
+            shouldFire = Math.abs(rpDiff) < 0.44 && rpDist < 20;
+        }
+
+        // Send input to server (replaces the normal input send)
+        networkManager.send({
+            type: 'input',
+            keys,
+            mouseDX,
+            mouseDY: 0,
+            fire: shouldFire,
+            dt,
+        });
+
+        // Still do client-side prediction and animation but skip normal input send
+        if (player && player.alive && mpMap) {
+            // Manually apply movement for local prediction
+            const cos = Math.cos(player.angle);
+            const sin = Math.sin(player.angle);
+            if (keys.includes('KeyW')) {
+                player.pos.x += cos * 3.0 * dt;
+                player.pos.y += sin * 3.0 * dt;
+            }
+            player.angle += mouseDX * 0.003;
+        }
+
+        // Update weapon animation, mp state, camera sync
+        const mpFireResult = weaponSystem.update(dt, input, player, [], mpMap || { grid: [], width: 0, height: 0 });
+        if (mpFireResult) {
+            const mpSoundMap = { 0: 'pistol_fire', 1: 'shotgun_fire', 2: 'machinegun_fire', 5: 'sniper_fire', 6: 'knife_swing' };
+            const soundName = mpSoundMap[weaponSystem.currentWeapon];
+            if (soundName) audio.play(soundName);
+        }
+        mpState.update(dt);
+        killFeed.update(dt);
+        scoreboard.setTiers(mpState.localTier, mpState.remoteTier);
+        if (player && player.alive) syncCamera();
+        return;
+    }
+
+    // Normal path when auto-combat is off
+    _origUpdateMP(dt);
+};
+
+window._startAutoP1 = () => {
+    window._autoP1Active = true;
+    window._autoP1Tick = 0;
+    console.log('[AutoP1] Started - overriding updateMultiplayer input');
+};
+
+window._stopAutoP1 = () => {
+    window._autoP1Active = false;
+    console.log('[AutoP1] Stopped');
+};
+
+// Extended getState for capture script monitoring
+window._getMpStatus = () => {
+    const rp = mpState ? mpState.remotePlayer : null;
+    return {
+        gameState,
+        localTier: mpState ? mpState.localTier : -1,
+        remoteTier: mpState ? mpState.remoteTier : -1,
+        winnerId: mpState ? mpState.winnerId : null,
+        localId: mpState ? mpState.localPlayerId : null,
+        matchTime: mpState ? mpState.matchTime : 0,
+        playerAlive: player ? player.alive : false,
+        playerHP: player ? player.health : 0,
+        playerX: player ? player.pos.x : 0,
+        playerY: player ? player.pos.y : 0,
+        playerAngle: player ? player.angle : 0,
+        remoteAlive: rp ? rp.alive : false,
+        remoteX: rp ? rp.pos.x : 0,
+        remoteY: rp ? rp.pos.y : 0,
+        autoP1Active: window._autoP1Active,
+        autoP1Tick: window._autoP1Tick || 0,
+        loopError: window._loopError || null,
+    };
 };
 """
 
