@@ -1,0 +1,149 @@
+// Retro Fury Factory Pipeline
+//
+// Combined developer + evaluator pipeline for the retro-fury game.
+// Based on factory.dot from attractor-go, customized for retro-fury.
+//
+// The developer agent works on ../retro-fury/ (the game source code).
+// The evaluator agent works on ../retro-fury-evaluator/ (this repo).
+//
+// Current state: The evaluator has REJECTED the submission with 1 critical
+// failure (mp_pointer_lock_game_start). The developer must fix the bug,
+// then the evaluator re-evaluates.
+//
+// Model assignments:
+//   Codex stages:   implement (code writing)
+//   Opus stages:    qa_verify, eval_orchestrator, eval_qa, eval_visionary
+
+digraph retro_fury_factory {
+    goal = "Fix the critical pointer lock bug in the retro-fury multiplayer game and verify the fix. The bug: requestPointerLock() is called from a WebSocket onmessage handler in onMultiplayerGameStart(), which silently fails because browsers require a trusted user gesture. Mouse input is completely dead after both players ready up, making multiplayer unplayable. The evaluator REJECTED the submission (218/219 checks passed, 1 critical failure). The developer must fix the bug and the evaluator must verify the fix works."
+    label = "Retro Fury Factory (Developer + Evaluator)"
+    default_max_retry = "3"
+    fallback_retry_target = "implement"
+
+    model_stylesheet = "
+        * {
+            reasoning_effort: high;
+        }
+    "
+
+    // ===================================================================
+    // Start
+    // ===================================================================
+    start [shape=Mdiamond, label="Begin Fix Cycle"]
+
+    // ===================================================================
+    // Developer Phase
+    // ===================================================================
+    subgraph cluster_developer {
+        label     = "Developer Agent (retro-fury/)"
+        style     = "dashed"
+        color     = "blue"
+        fontcolor = "blue"
+
+    implement [
+        label       = "Fix Pointer Lock Bug\n(Codex 5.3)"
+        llm_prompt  = "You are a senior game developer fixing a critical bug in the retro-fury FPS game.\n\nWORKSPACE: Work in the retro-fury/ directory (the game source code). DO NOT modify files in retro-fury-evaluator/.\n\nCRITICAL BUG (from evaluator report at retro-fury-evaluator/reports/2026-02-18-114043.md):\nIn src/main.js, the function onMultiplayerGameStart() calls displayCanvas.requestPointerLock() from inside a WebSocket onmessage handler. Browsers SILENTLY REJECT requestPointerLock() unless it originates from a trusted user gesture (click, keypress). This means:\n- After both players ready up and game_start is received, the game transitions to MP_PLAYING\n- The arena renders correctly but mouse input is completely dead\n- InputManager._onMouseMove returns early when !this._pointerLocked\n- Players cannot look around, aim, or shoot\n- The game appears FROZEN to both players\n\nRECOMMENDED FIX (Option B from evaluator):\n1. Remove the requestPointerLock() call from onMultiplayerGameStart()\n2. Let the existing canvas click handler (input._onCanvasClick) handle pointer lock acquisition\n3. Add a visible 'CLICK TO PLAY' text overlay in renderMultiplayer() when pointer lock is not active:\n   if (!input.isPointerLocked()) {\n       bufferCtx.font = 'bold 14px \"Courier New\"';\n       bufferCtx.fillStyle = '#FFCC00';\n       bufferCtx.textAlign = 'center';\n       bufferCtx.fillText('CLICK TO PLAY', SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);\n   }\n\nALSO FIX (minor):\n- The player_ready handler in setupNetworkHandlers (around line 1046) checks msg.playerId !== mpState.localPlayerId, but localPlayerId is null at that point. All player_ready messages trigger opponentReady(). Store localPlayerId on mpState when receiving room_created or player_joined.\n\nAfter making fixes:\n1. Verify the code has no syntax errors\n2. Commit and push the changes\n3. Write status.json confirming the fix"
+        llm_model   = "gpt-5.3-codex"
+        llm_provider = "openai"
+        goal_gate   = "true"
+        max_retries = "3"
+        retry_target = "implement"
+        timeout     = "10m"
+    ]
+
+    qa_verify [
+        shape       = "diamond"
+        type        = "conditional"
+        label       = "QA Verification\n(Claude Opus)"
+        llm_prompt  = "You are a QA lead verifying the pointer lock bug fix in the retro-fury game.\n\nWORKSPACE: Read files from retro-fury/ (the game source code).\n\nVerify ALL of the following:\n1. The requestPointerLock() call has been REMOVED from onMultiplayerGameStart() in src/main.js\n2. There is a visible 'CLICK TO PLAY' overlay rendered when pointer lock is not active during multiplayer\n3. The existing canvas click handler still acquires pointer lock on user click\n4. The player_ready handler correctly filters self-messages using localPlayerId\n5. No syntax errors in any modified files\n6. The fix does not break single-player mode (pointer lock should still work via click)\n\nIf ALL checks pass: status SUCCESS, preferred_next_label 'QA Passed'\nIf ANY check fails: status FAIL, preferred_next_label 'QA Failed', list every issue"
+        llm_model   = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    } // end cluster_developer
+
+    // ===================================================================
+    // Submission handoff
+    // ===================================================================
+    submit [
+        label      = "Submit to Evaluator"
+        llm_prompt = "You are handling the submission handoff from the developer to the evaluator.\n\nWORKSPACE: Work from the retro-fury-evaluator/ directory.\n\n1. Run the submission tool: bash retro-fury-evaluator/tools/submit.sh retro-fury/\n   This copies the game snapshot into retro-fury-evaluator/submissions/\n2. Verify the submission was created successfully\n3. Record the submission ID in status.json context_updates\n\nWrite status.json with outcome 'success' and the submission path in context_updates."
+        llm_model  = "gpt-5.3-codex"
+        llm_provider = "openai"
+        auto_status = "true"
+        timeout    = "2m"
+    ]
+
+    // ===================================================================
+    // Evaluator Phase
+    // ===================================================================
+    subgraph cluster_evaluator {
+        label     = "Evaluator Agent (retro-fury-evaluator/)"
+        style     = "dashed"
+        color     = "red"
+        fontcolor = "red"
+
+    eval_orchestrator [
+        label       = "Eval Orchestrator\n(Claude Opus)"
+        llm_prompt  = "You are the evaluation orchestrator for the retro-fury FPS game.\n\nWORKSPACE: Work in retro-fury-evaluator/ directory.\n\nA new submission has been received after the developer fixed the critical pointer lock bug. The previous evaluation (reports/2026-02-18-114043.md) found:\n- 218/219 checks passed\n- 1 CRITICAL FAILURE: mp_pointer_lock_game_start (requestPointerLock from WebSocket handler)\n\nYour job:\n1. Read the vision (evaluation/vision.md) and criteria (evaluation/criteria.yaml)\n2. Focus the re-evaluation on:\n   a. The pointer lock fix — verify requestPointerLock is NO LONGER called from a WebSocket handler\n   b. A visible 'click to play' prompt exists for multiplayer\n   c. Regression check — single-player and other multiplayer features still work\n3. Produce BUILDER TASKS and QA CHECKLIST focusing on the fix verification\n\nThe existing tools in tools/ already cover 218 checks. Focus new work on verifying the fix."
+        llm_model   = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    eval_qa [
+        label       = "Eval QA\n(Claude Opus)"
+        llm_prompt  = "You are a QA engineer re-evaluating the retro-fury game after the pointer lock bug fix.\n\nWORKSPACE: Work in retro-fury-evaluator/ directory.\n\n1. Run the full evaluation: bash tools/run-evaluation.sh\n2. Record results for all 219 checks\n3. Pay special attention to mp_pointer_lock_game_start — this was the critical failure\n4. Also use the browser-based eval-server.py to visually verify multiplayer works:\n   a. Start eval-server.py to serve the submission with test hooks\n   b. Start the game's WebSocket server\n   c. Use browser automation to test the full multiplayer flow\n   d. Capture screenshots at high frequency for evaluation GIFs\n5. Verify the 'CLICK TO PLAY' prompt is visible and that clicking acquires pointer lock\n\nProduce a structured evaluation report with pass/fail counts and evidence."
+        llm_model   = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    eval_visionary [
+        shape       = "diamond"
+        type        = "conditional"
+        label       = "Eval Visionary\n(Claude Opus)"
+        llm_prompt  = "You are the visionary for the retro-fury project.\n\nWORKSPACE: Work in retro-fury-evaluator/ directory.\nVision: evaluation/vision.md\nCriteria: evaluation/criteria.yaml\n\nYou have the QA evaluation report. Judge the submission:\n1. Did the pointer lock bug get fixed? Is requestPointerLock no longer called from a WebSocket handler?\n2. Is there a visible 'CLICK TO PLAY' prompt for multiplayer?\n3. Do all 219 checks pass (including the previously-critical mp_pointer_lock_game_start)?\n4. Does multiplayer actually work — can two players play together?\n5. Are there any regressions in single-player?\n\nScoring (from criteria.yaml):\n- APPROVED (>= 80%, all critical pass): outcome 'success'\n- APPROVED PARTIAL (>= 60%, all critical pass): outcome 'partial_success'\n- REJECTED (< 60% or critical fail): outcome 'fail'\n\nIf evaluation was insufficient (missing checks, unclear results): outcome 'retry' with feedback for the orchestrator.\n\nWrite the final report to reports/ following the template in CLAUDE.md."
+        llm_model   = "claude-opus-4-6"
+        llm_provider = "anthropic"
+        goal_gate   = "true"
+        max_retries = "2"
+    ]
+
+    } // end cluster_evaluator
+
+    // ===================================================================
+    // Exit
+    // ===================================================================
+    exit [shape=Msquare, label="Done"]
+
+    // ===================================================================
+    // Edges — Developer Phase
+    // ===================================================================
+    start     -> implement
+    implement -> qa_verify
+
+    qa_verify -> submit    [condition="outcome=success",          label="QA Passed",  weight="10"]
+    qa_verify -> submit    [condition="outcome=partial_success",  label="QA Passed (partial)", weight="5"]
+    qa_verify -> implement [condition="outcome=fail",             label="QA Failed",  weight="10", loop_restart="true"]
+
+    // ===================================================================
+    // Edges — Submission → Evaluator
+    // ===================================================================
+    submit -> eval_orchestrator
+
+    // ===================================================================
+    // Edges — Evaluator Phase
+    // ===================================================================
+    eval_orchestrator -> eval_qa
+    eval_qa           -> eval_visionary
+
+    eval_visionary -> exit      [condition="outcome=success",          label="Approved",          weight="10"]
+    eval_visionary -> exit      [condition="outcome=partial_success",  label="Approved (partial)", weight="5"]
+    eval_visionary -> eval_orchestrator [condition="outcome=retry",    label="Refine Evaluation",  weight="10"]
+    eval_visionary -> implement [condition="outcome=fail",             label="Rejected",          weight="10", loop_restart="true"]
+}
