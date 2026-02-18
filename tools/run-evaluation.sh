@@ -95,7 +95,28 @@ else
     score=0
 fi
 
-if [ "$score" -ge 80 ]; then
+# Check for critical failures by scanning results for FAIL on critical check IDs.
+# Critical checks are defined in criteria.yaml. We maintain a hardcoded list here
+# for the shell-based runner; the agent (visionary) also checks criteria.yaml.
+CRITICAL_CHECKS="engine_raycaster weapons_all_five enemies_all_five levels_all_five ai_state_machine mp_server_exists mp_server_starts code_syntax mp_remote_bind mp_client_configurable_host mp_pointer_lock_game_start"
+critical_fail=0
+critical_fail_list=""
+
+for result_file in "$RESULTS_DIR"/*.json; do
+    for crit_id in $CRITICAL_CHECKS; do
+        if grep -q "\"check_id\": \"$crit_id\"" "$result_file" 2>/dev/null; then
+            # Check if this critical check failed
+            if grep -A1 "\"check_id\": \"$crit_id\"" "$result_file" | grep -q '"FAIL"'; then
+                critical_fail=$((critical_fail + 1))
+                critical_fail_list="$critical_fail_list $crit_id"
+            fi
+        fi
+    done
+done
+
+if [ "$critical_fail" -gt 0 ]; then
+    verdict="REJECTED"
+elif [ "$score" -ge 80 ]; then
     verdict="APPROVED"
 elif [ "$score" -ge 60 ]; then
     verdict="APPROVED (PARTIAL)"

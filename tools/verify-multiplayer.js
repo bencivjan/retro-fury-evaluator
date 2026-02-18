@@ -302,6 +302,163 @@ function checkClientNet() {
 }
 
 // =========================================================================
+// Cross-Machine Playability (Critical)
+// =========================================================================
+function checkCrossMachinePlayability() {
+    const serverIndex = readFile('server/index.js');
+    const netManager = readFile('src/net/network-manager.js');
+    const lobbyFile = readFile('src/ui/lobby.js');
+    const remotePlayerFile = readFile('src/game/remote-player.js');
+    const gameLoopFile = readFile('server/game-loop.js');
+    const mpStateFile = readFile('src/net/mp-state.js');
+
+    // Check 1: Server binds to 0.0.0.0 (not just localhost)
+    if (serverIndex) {
+        // Server should listen on 0.0.0.0 or not specify a host (defaults to all interfaces)
+        // FAIL if it explicitly binds to only 'localhost' or '127.0.0.1'
+        const hasLocalhostOnly = /\.listen\s*\(\s*\d+\s*,\s*['"`](localhost|127\.0\.0\.1)['"`]/i.test(serverIndex);
+        const hasAllInterfaces = /0\.0\.0\.0/.test(serverIndex);
+        // Also pass if listen() is called with just a port (no host = all interfaces)
+        const hasPortOnly = /\.listen\s*\(\s*(port|\d+)\s*[,)]/i.test(serverIndex) && !hasLocalhostOnly;
+
+        if (hasAllInterfaces) {
+            addResult('mp_remote_bind', 'PASS', 'Server explicitly binds to 0.0.0.0 for remote access');
+        } else if (hasPortOnly && !hasLocalhostOnly) {
+            addResult('mp_remote_bind', 'PASS', 'Server listens on port without restricting to localhost (accepts remote connections)');
+        } else if (hasLocalhostOnly) {
+            addResult('mp_remote_bind', 'FAIL', 'Server binds to localhost/127.0.0.1 only — remote machines cannot connect');
+        } else {
+            addResult('mp_remote_bind', 'FAIL', 'Cannot determine server bind address — should explicitly use 0.0.0.0');
+        }
+    } else {
+        addResult('mp_remote_bind', 'FAIL', 'server/index.js not found');
+    }
+
+    // Check 2: Client allows configurable server host (not hardcoded localhost)
+    const clientCode = (netManager || '') + (lobbyFile || '') + (mpStateFile || '');
+    if (clientCode) {
+        const hasLocalhostHardcoded = /ws:\/\/localhost|ws:\/\/127\.0\.0\.1|wss:\/\/localhost/.test(clientCode);
+        const hasConfigurableHost = /location\.host|window\.location|serverUrl|server.?address|host.?input|serverHost|connect.?url/i.test(clientCode);
+        const hasPromptOrInput = /prompt|input.*address|input.*host|input.*server|input.*ip/i.test(clientCode);
+
+        if (hasConfigurableHost || hasPromptOrInput) {
+            addResult('mp_client_configurable_host', 'PASS', 'Client supports configurable server address for cross-machine play');
+        } else if (hasLocalhostHardcoded) {
+            addResult('mp_client_configurable_host', 'FAIL', 'Client has hardcoded localhost WebSocket URL — cannot connect from different machine');
+        } else {
+            addResult('mp_client_configurable_host', 'FAIL', 'Cannot determine if client allows configurable server host');
+        }
+    } else {
+        addResult('mp_client_configurable_host', 'FAIL', 'No client networking code found');
+    }
+
+    // Check 3: Remote player interpolation (smooth movement over network)
+    if (remotePlayerFile) {
+        if (searchFor(remotePlayerFile, /interpolat|lerp|smooth|blend|tween/i)) {
+            addResult('mp_position_interpolation', 'PASS', 'Remote player position interpolation detected for smooth networked movement');
+        } else {
+            addResult('mp_position_interpolation', 'FAIL', 'No position interpolation for remote players — movement will appear jerky over network');
+        }
+    } else {
+        addResult('mp_position_interpolation', 'FAIL', 'No remote player module — cannot interpolate remote movement');
+    }
+
+    // Check 4: Disconnect handling
+    const allCode = (serverIndex || '') + (netManager || '') + (lobbyFile || '') + (mpStateFile || '');
+    if (searchFor(allCode, /disconnect|close|onclose|opponent_disconnected/i) &&
+        searchFor(allCode, /lobby|menu|return|leave/i)) {
+        addResult('mp_disconnect_flow', 'PASS', 'Disconnect handling with return-to-lobby flow detected');
+    } else if (searchFor(allCode, /disconnect|close|onclose/i)) {
+        addResult('mp_disconnect_flow', 'PASS', 'Disconnect handling detected (partial — return flow may be implicit)');
+    } else {
+        addResult('mp_disconnect_flow', 'FAIL', 'No disconnect handling detected — game may freeze when opponent disconnects');
+    }
+
+    // Check 5: Regular input sending interval
+    // Input may be sent from the main game loop (requestAnimationFrame in main.js)
+    // or via a dedicated interval in the network layer.
+    const mainJs = readFile('src/main.js');
+    const inputSendCode = (netManager || '') + (mpStateFile || '') + (mainJs || '');
+    if (inputSendCode) {
+        const hasSendInput = searchFor(inputSendCode, /send\s*\(\s*\{[^}]*type\s*:\s*['"`]input/i) ||
+                             searchFor(inputSendCode, /send.*input|sendInput/i);
+        const hasLoop = searchFor(inputSendCode, /requestAnimationFrame|setInterval|tick/i);
+
+        if (hasSendInput && hasLoop) {
+            addResult('mp_input_sending', 'PASS', 'Client sends input every frame via game loop');
+        } else if (hasSendInput) {
+            addResult('mp_input_sending', 'PASS', 'Client input sending detected');
+        } else {
+            addResult('mp_input_sending', 'FAIL', 'No regular input sending detected — may cause unresponsive cross-machine play');
+        }
+    } else {
+        addResult('mp_input_sending', 'FAIL', 'No client code found to check input sending');
+    }
+
+    // Check 6: Pointer lock on game start — must be from a user gesture
+    // Browser security requires requestPointerLock() to be called from a
+    // trusted user gesture (click, keypress). If it's called from a WebSocket
+    // message handler (e.g. game_start), it silently fails, leaving the player
+    // with no mouse control — the game appears "frozen".
+    if (mainJs) {
+        // Find the game_start handler and the function it calls
+        const hasPointerLockInGameStart =
+            // Pattern: requestPointerLock is called inside onMultiplayerGameStart
+            // which is called from a WebSocket message handler, not a user gesture
+            /function\s+onMultiplayerGameStart[\s\S]*?requestPointerLock/.test(mainJs);
+
+        const hasClickToStart =
+            // The correct approach: show a "click to start" prompt or acquire
+            // pointer lock from a click handler after game_start
+            /click.?to.?start|click.?to.?play|press.?to.?start/i.test(mainJs) ||
+            // Or pointer lock is acquired in a click/keydown handler that fires
+            // after the game start transition
+            /addEventListener\s*\(\s*['"`]click['"`][\s\S]{0,200}requestPointerLock/.test(mainJs);
+
+        const hasPointerLockFallback =
+            // Check if there's a canvas click handler that acquires pointer lock
+            // (the input.js _onCanvasClick handler is a backup, but the user
+            // gets no visual cue to click)
+            /click[\s\S]{0,100}requestPointerLock/i.test(mainJs);
+
+        if (hasPointerLockInGameStart && !hasClickToStart) {
+            addResult('mp_pointer_lock_game_start', 'FAIL',
+                'requestPointerLock() is called from onMultiplayerGameStart (a WebSocket handler) — ' +
+                'this silently fails in all modern browsers because it requires a user gesture (click/keypress). ' +
+                'Players will have no mouse control after game starts, making the game appear frozen');
+        } else if (hasClickToStart) {
+            addResult('mp_pointer_lock_game_start', 'PASS',
+                'Game start transition acquires pointer lock from a user gesture context');
+        } else if (!hasPointerLockInGameStart && hasPointerLockFallback) {
+            addResult('mp_pointer_lock_game_start', 'PASS',
+                'Pointer lock is acquired via click handler (not from WebSocket handler)');
+        } else {
+            addResult('mp_pointer_lock_game_start', 'PASS',
+                'No problematic requestPointerLock detected in game start flow');
+        }
+    } else {
+        addResult('mp_pointer_lock_game_start', 'FAIL', 'src/main.js not found — cannot check pointer lock flow');
+    }
+
+    // Check 7: Latency handling patterns
+    const allGameCode = (gameLoopFile || '') + (netManager || '') + (remotePlayerFile || '') + (mpStateFile || '');
+    let latencyFeatures = 0;
+    if (searchFor(allGameCode, /interpolat|lerp/i)) latencyFeatures++;
+    if (searchFor(allGameCode, /predict|client.?side/i)) latencyFeatures++;
+    if (searchFor(allGameCode, /timestamp|time.?stamp|server.?time|latency|ping|rtt/i)) latencyFeatures++;
+    if (searchFor(allGameCode, /buffer|queue|jitter/i)) latencyFeatures++;
+    if (searchFor(allGameCode, /delta.?time|dt|tick.?rate/i)) latencyFeatures++;
+
+    if (latencyFeatures >= 2) {
+        addResult('mp_latency_tolerance', 'PASS', `${latencyFeatures} latency-handling features detected (interpolation, timestamps, buffers, etc.)`);
+    } else if (latencyFeatures === 1) {
+        addResult('mp_latency_tolerance', 'PASS', `Basic latency handling detected (${latencyFeatures} feature). Minimum for playable cross-machine experience.`);
+    } else {
+        addResult('mp_latency_tolerance', 'FAIL', 'No latency-handling features detected — cross-machine play will likely feel broken');
+    }
+}
+
+// =========================================================================
 // Run all checks
 // =========================================================================
 console.log('=== Multiplayer Verification ===');
@@ -315,6 +472,7 @@ checkGunGame();
 checkArena();
 checkGameLoop();
 checkClientNet();
+checkCrossMachinePlayability();
 
 console.log(`PASS: ${passCount}`);
 console.log(`FAIL: ${failCount}`);

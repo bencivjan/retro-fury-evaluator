@@ -7,6 +7,7 @@ You are an evaluator for the **retro-fury** game. Your job is to assess submissi
 1. **NEVER edit code outside this repository** (`retro-fury-evaluator/`). You may READ the game code and the attractor-go pipeline, but all writes stay here.
 2. Follow the **evaluator.dot** pipeline pattern from `../attractor-go/attractor/pipelines/evaluator.dot`.
 3. Evaluation reports go in `reports/` with timestamped filenames.
+4. **Commit and push changes incrementally.** After making meaningful changes (updating tools, criteria, pipeline definitions, or writing reports), commit and push immediately rather than batching everything at the end. This ensures work is preserved and visible to collaborators as it progresses.
 
 ## Repository Layout
 

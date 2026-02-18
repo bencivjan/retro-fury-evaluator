@@ -2,6 +2,13 @@
 
 This document consolidates the full project vision from GAME_PLAN.md and MULTIPLAYER_PLAN.md. It is the authoritative reference for what the game should achieve.
 
+## High-Level Goals
+
+1. **Seamless, fun multiplayer across different computers** — Two human players on separate machines must be able to connect, play, and have a smooth, enjoyable experience. Networking must handle real-world conditions: different networks, typical latency, reconnection. The multiplayer experience should feel responsive and fair, not laggy or broken. This is the primary multiplayer quality bar.
+2. **Authentic retro FPS feel** — The game should evoke Wolfenstein 3D / DOOM with raycasting visuals, procedural audio, and fast-paced gameplay.
+3. **Complete single-player campaign** — 5 levels with progressive difficulty, unique objectives, and diverse enemy types.
+4. **Competitive Gun Game mode** — 1v1 weapon progression PvP that rewards skill and is genuinely fun to play.
+
 ## Overview
 
 Retro Fury is a retro-style first-person shooter built with JavaScript and HTML5 Canvas, using a raycasting engine inspired by Wolfenstein 3D and DOOM. It features a 5-level single-player campaign with unique objectives and enemy types, plus a 1v1 multiplayer Gun Game PvP mode.
@@ -170,6 +177,15 @@ States: IDLE -> PATROL -> ALERT (0.5s) -> CHASE -> ATTACK -> PAIN (0.3s) -> DEAT
 - Mixed enemies in corridors leading to arena
 
 ## Multiplayer: Gun Game Mode
+
+### Cross-Machine Playability (Critical)
+The multiplayer must work seamlessly when two humans play from different computers on different networks:
+- **Server must be connectable** — listen on `0.0.0.0` (not just localhost) so remote machines can reach it
+- **Connection flow must be simple** — host creates room, gets code, other player joins with code and server address
+- **Latency tolerance** — game must feel responsive with up to 100ms round-trip latency; position interpolation and input prediction smooth out network jitter
+- **Disconnection handling** — clean notification when opponent disconnects, ability to return to lobby
+- **Fair gameplay** — server-authoritative hit detection prevents cheating; both players see consistent game state
+- **No localhost-only assumptions** — all WebSocket URLs, CORS, and network code must work across machines, not just `ws://localhost`
 
 ### Architecture
 - Server-authoritative Node.js WebSocket server

@@ -149,6 +149,37 @@ dimensions:
         name: "Respawn system with timer and random spawn point"
         tool: verify-multiplayer
 
+      - id: mp_remote_bind
+        name: "Server binds to 0.0.0.0 (not localhost-only) for cross-machine play"
+        tool: verify-multiplayer
+        critical: true
+
+      - id: mp_client_configurable_host
+        name: "Client allows connecting to configurable server address (not hardcoded localhost)"
+        tool: verify-multiplayer
+        critical: true
+
+      - id: mp_interpolation
+        name: "Remote player position interpolation for smooth movement across network"
+        tool: verify-multiplayer
+
+      - id: mp_disconnect_handling
+        name: "Clean disconnect notification and return-to-lobby flow"
+        tool: verify-multiplayer
+
+      - id: mp_input_handling
+        name: "Client sends input at regular intervals for responsive cross-machine play"
+        tool: verify-multiplayer
+
+      - id: mp_pointer_lock_game_start
+        name: "Pointer lock acquired from user gesture (not WebSocket handler) so mouse works after game start"
+        tool: verify-multiplayer
+        critical: true
+
+      - id: mp_latency_tolerance
+        name: "Game handles typical network latency (50-100ms) without breaking gameplay"
+        tool: verify-multiplayer
+
   ui_audio:
     weight: 10
     description: "HUD, menus, minimap, audio, transitions"

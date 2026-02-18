@@ -10,7 +10,7 @@
 //   4. Visionary      (Claude Opus)  - judge against vision, provide feedback
 
 digraph retro_fury_evaluator {
-    goal = "Evaluate a retro-fury game submission against the project vision defined in evaluation/vision.md. The game should be a retro FPS with raycasting engine, 5 single-player levels, 5 enemy types, 5 weapons, multiplayer gun game mode, and server-authoritative WebSocket networking."
+    goal = "Evaluate a retro-fury game submission against the project vision defined in evaluation/vision.md. The game should be a retro FPS with raycasting engine, 5 single-player levels, 5 enemy types, 5 weapons, multiplayer gun game mode, and server-authoritative WebSocket networking. CRITICAL: Multiplayer must work seamlessly and be fun for humans playing on different computers — the server must accept remote connections (0.0.0.0), handle real-world latency with interpolation, and provide a smooth cross-machine experience."
     label = "Retro Fury Evaluator Pipeline"
     default_max_retry = "3"
     fallback_retry_target = "builder"
