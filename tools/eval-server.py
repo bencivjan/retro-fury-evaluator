@@ -134,7 +134,7 @@ updateMultiplayer = function(dt) {
         while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
         while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
         // Clamp mouseDX to avoid extreme per-frame rotation
-        const mouseDX = Math.max(-150, Math.min(150, angleDiff / 0.003));
+        const mouseDX = Math.max(-200, Math.min(200, angleDiff / 0.003));
 
         // --- Decide firing ---
         let shouldFire = false;
@@ -144,7 +144,7 @@ updateMultiplayer = function(dt) {
             let rpDiff = rpAngle - player.angle;
             while (rpDiff > Math.PI) rpDiff -= 2 * Math.PI;
             while (rpDiff < -Math.PI) rpDiff += 2 * Math.PI;
-            shouldFire = Math.abs(rpDiff) < 0.44 && rpDist < 20;
+            shouldFire = Math.abs(rpDiff) < 0.6 && rpDist < 20;
         }
 
         // --- Inject into real input system (private fields) ---
