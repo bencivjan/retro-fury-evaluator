@@ -20,7 +20,7 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 const CAPTURE_INTERVAL_MS = 200; // ~5 fps
-const MATCH_TIMEOUT_MS = 180_000; // 3 minutes max
+const MATCH_TIMEOUT_MS = 300_000; // 5 minutes max
 const CANVAS_WIDTH = 320;
 const CANVAS_HEIGHT = 200;
 const GIF_SCALE = 2; // Scale up for visibility
@@ -319,7 +319,21 @@ async function main() {
             if (Date.now() - lastLog > 3000) {
                 const t1 = s1 ? s1.localTier : '?';
                 const t2 = s2 ? s2.localTier : '?';
-                log(`${elapsed}s - ${p1Frames.length} frames | P1 tier=${t1} P2 tier=${t2}`);
+                const p1x = s1 ? s1.playerX.toFixed(1) : '?';
+                const p1y = s1 ? s1.playerY.toFixed(1) : '?';
+                const p2x = s2 ? s2.playerX.toFixed(1) : '?';
+                const p2y = s2 ? s2.playerY.toFixed(1) : '?';
+                const p1a = s1 ? s1.playerAlive : '?';
+                const p2a = s2 ? s2.playerAlive : '?';
+                const p1hp = s1 ? s1.playerHP : '?';
+                const p2hp = s2 ? s2.playerHP : '?';
+                const auto1 = s1 ? s1.autoP1Active : '?';
+                const auto2 = s2 ? s2.autoP1Active : '?';
+                const err1 = s1 ? s1.loopError : null;
+                const err2 = s2 ? s2.loopError : null;
+                log(`${elapsed}s - ${p1Frames.length} frames | P1(${p1x},${p1y} hp=${p1hp} alive=${p1a} auto=${auto1}) tier=${t1} | P2(${p2x},${p2y} hp=${p2hp} alive=${p2a} auto=${auto2}) tier=${t2}`);
+                if (err1) log(`  P1 error: ${err1}`);
+                if (err2) log(`  P2 error: ${err2}`);
                 lastLog = Date.now();
             }
 
