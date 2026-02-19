@@ -1,0 +1,10 @@
+{
+  "name": "retro-fury-evaluator",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Evaluation pipeline for the retro-fury FPS game",
+  "dependencies": {
+    "puppeteer": "^24.2.0"
+  }
+}

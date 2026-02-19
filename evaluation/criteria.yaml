@@ -180,6 +180,32 @@ dimensions:
         name: "Game handles typical network latency (50-100ms) without breaking gameplay"
         tool: verify-multiplayer
 
+      # Browser-based arena checks (require Puppeteer)
+      - id: arena_browsers_loaded
+        name: "Both browser instances load game without errors"
+        tool: browser-arena
+
+      - id: arena_room_flow
+        name: "Room create/join works end-to-end in browser"
+        tool: browser-arena
+
+      - id: arena_game_started
+        name: "Game transitions to MP_PLAYING after both ready"
+        tool: browser-arena
+
+      - id: arena_no_errors
+        name: "No JS runtime errors during multiplayer match"
+        tool: browser-arena
+        critical: true
+
+      - id: arena_match_outcome
+        name: "Match completes with a victory within timeout"
+        tool: browser-arena
+
+      - id: arena_tier_progression
+        name: "Gun Game weapon tier progression occurs"
+        tool: browser-arena
+
   ui_audio:
     weight: 10
     description: "HUD, menus, minimap, audio, transitions"
