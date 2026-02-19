@@ -18,7 +18,7 @@ SUBMISSION_DIR = os.path.join(
 )
 
 # JavaScript to append to main.js - exposes test hooks on window
-TEST_HOOKS = b"""
+TEST_HOOKS = """
 
 // === EVALUATOR TEST HOOKS (injected by eval-server.py) ===
 window._test = {
@@ -96,14 +96,12 @@ gameLoop = function(timestamp) {
 };
 
 // === AUTO-COMBAT for P1 (bypasses pointer lock requirement) ===
-// Patches updateMultiplayer to use auto-combat input instead of real input.
+// Injects synthetic input into the real input system, then delegates to the
+// normal updateMultiplayer path. This avoids duplicate client-side prediction
+// (which caused jitter) and ensures weapon firing works correctly.
 window._autoP1Active = false;
 window._autoP1Tick = 0;
 
-// Store the desired auto-combat input per frame
-window._autoP1Input = { keys: [], mouseDX: 0, fire: false };
-
-// Patch updateMultiplayer to use auto-combat input when active
 const _origUpdateMP = updateMultiplayer;
 updateMultiplayer = function(dt) {
     if (window._autoP1Active && gameState === GameState.MP_PLAYING && player && player.alive) {
@@ -111,51 +109,36 @@ updateMultiplayer = function(dt) {
         const tick = window._autoP1Tick;
 
         const rp = mpState.remotePlayer;
-        let keys = [];
-        let mouseDX = 0;
-        let shouldFire = false;
-
         const myX = player.pos.x;
         const myY = player.pos.y;
 
         // Normalize player angle to prevent unbounded growth
         player.angle = ((player.angle % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
 
-        // Phase 1: Navigate to open area when in wall corridors.
-        // Map has wall columns at x=6 and x=25 from y=0 to y=3.
+        // --- Decide movement target ---
+        // Navigate to open area when in wall corridors (walls at x=6,x=25 near y=0..3)
         const inOpenArea = myY > 6 && myX > 8 && myX < 24;
-        const navPhase = !inOpenArea;
-
         let targetX, targetY;
-        if (navPhase) {
-            targetX = 16;
-            targetY = 12;
+        if (!inOpenArea) {
+            targetX = 16; targetY = 12;
         } else if (rp && rp.alive && rp.pos) {
-            targetX = rp.pos.x;
-            targetY = rp.pos.y;
+            targetX = rp.pos.x; targetY = rp.pos.y;
         } else {
             targetX = 16 + Math.sin(tick * 0.01) * 5;
             targetY = 16 + Math.cos(tick * 0.01) * 5;
         }
 
-        const dx = targetX - myX;
-        const dy = targetY - myY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        const targetAngle = Math.atan2(dy, dx);
+        // --- Compute aim ---
+        const targetAngle = Math.atan2(targetY - myY, targetX - myX);
         let angleDiff = targetAngle - player.angle;
         while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
         while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+        // Clamp mouseDX to avoid extreme per-frame rotation
+        const mouseDX = Math.max(-150, Math.min(150, angleDiff / 0.003));
 
-        mouseDX = Math.max(-300, Math.min(300, angleDiff / 0.003));
-
-        keys.push('KeyW');
-        const strafePhase = tick % 80;
-        if (strafePhase < 20) keys.push('KeyA');
-        else if (strafePhase >= 40 && strafePhase < 60) keys.push('KeyD');
-
-        // Fire whenever aimed at opponent, even during nav
-        if (rp && rp.alive) {
+        // --- Decide firing ---
+        let shouldFire = false;
+        if (rp && rp.alive && rp.pos) {
             const rpDist = Math.sqrt(Math.pow(rp.pos.x - myX, 2) + Math.pow(rp.pos.y - myY, 2));
             const rpAngle = Math.atan2(rp.pos.y - myY, rp.pos.x - myX);
             let rpDiff = rpAngle - player.angle;
@@ -164,43 +147,23 @@ updateMultiplayer = function(dt) {
             shouldFire = Math.abs(rpDiff) < 0.44 && rpDist < 20;
         }
 
-        // Send input to server (replaces the normal input send)
-        networkManager.send({
-            type: 'input',
-            keys,
-            mouseDX,
-            mouseDY: 0,
-            fire: shouldFire,
-            dt,
-        });
+        // --- Inject into real input system (private fields) ---
+        // This lets the normal player.update() and weaponSystem.update() work
+        // through their standard code paths, avoiding duplicate prediction.
+        input._keysDown.clear();
+        input._keysDown.add('KeyW');
+        const strafePhase = tick % 80;
+        if (strafePhase < 20) input._keysDown.add('KeyA');
+        else if (strafePhase >= 40 && strafePhase < 60) input._keysDown.add('KeyD');
 
-        // Still do client-side prediction and animation but skip normal input send
-        if (player && player.alive && mpMap) {
-            // Manually apply movement for local prediction
-            const cos = Math.cos(player.angle);
-            const sin = Math.sin(player.angle);
-            if (keys.includes('KeyW')) {
-                player.pos.x += cos * 3.0 * dt;
-                player.pos.y += sin * 3.0 * dt;
-            }
-            player.angle += mouseDX * 0.003;
-        }
-
-        // Update weapon animation, mp state, camera sync
-        const mpFireResult = weaponSystem.update(dt, input, player, [], mpMap || { grid: [], width: 0, height: 0 });
-        if (mpFireResult) {
-            const mpSoundMap = { 0: 'pistol_fire', 1: 'shotgun_fire', 2: 'machinegun_fire', 5: 'sniper_fire', 6: 'knife_swing' };
-            const soundName = mpSoundMap[weaponSystem.currentWeapon];
-            if (soundName) audio.play(soundName);
-        }
-        mpState.update(dt);
-        killFeed.update(dt);
-        scoreboard.setTiers(mpState.localTier, mpState.remoteTier);
-        if (player && player.alive) syncCamera();
-        return;
+        input._mouseDeltaX = mouseDX;
+        input._mouseDeltaY = 0;
+        input._mouseDown = shouldFire;
+        input._mousePressed = shouldFire;
     }
 
-    // Normal path when auto-combat is off
+    // Run the normal updateMultiplayer (handles input send, prediction,
+    // weapon animation, mpState, camera sync — all in one consistent path)
     _origUpdateMP(dt);
 };
 
@@ -252,7 +215,7 @@ class EvalHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 with open(filepath, "rb") as f:
                     content = f.read()
-                content += TEST_HOOKS
+                content += TEST_HOOKS.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/javascript")
                 self.send_header("Content-Length", len(content))
